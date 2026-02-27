@@ -1,0 +1,23 @@
+{
+  "name": "clawd-voice-chat",
+  "version": "1.0.0",
+  "description": "Real-time voice chat with Clawd AI via OpenAI Realtime API",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "dependencies": {
+    "@mozilla/readability": "^0.6.0",
+    "better-sqlite3": "^12.6.2",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "linkedom": "^0.18.12",
+    "multer": "^2.0.2",
+    "ws": "^8.18.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

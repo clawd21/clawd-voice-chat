@@ -1,0 +1,9 @@
+node_modules/
+.env
+voice-chat.db
+voice-chat.db
+voice-chat.db-shm
+voice-chat.db-wal
+chat-history.json
+public/avatar.jpg
+config.json
