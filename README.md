@@ -2,6 +2,24 @@
 
 A real-time voice chat app powered by OpenAI's Realtime API with Slack integration for task handoff. Talk naturally, get instant voice responses, and delegate real work to an AI team in Slack.
 
+## Project Scope
+
+This repo is focused on:
+- A single-node Node.js voice web app using OpenAI Realtime.
+- Slack handoff for execution-oriented workflows (voice -> Slack -> bot reply -> voice readback).
+- PWA UX for desktop and mobile.
+
+Out of scope for this repo:
+- Organization-specific infrastructure topology.
+- Personal hostnames, device identities, or private network details.
+- Secrets management outside local environment files.
+
+## Security and Privacy
+
+- Secrets must stay in `.env` and must never be committed.
+- Docs intentionally avoid personal infra identifiers and private endpoints.
+- Use scoped API tokens, rotate exposed credentials, and keep production auth enabled.
+
 ## Architecture
 
 ```
