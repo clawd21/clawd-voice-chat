@@ -938,20 +938,8 @@
       });
     }
 
-    // 3. Silent audio keepalive — plays inaudible tone to keep audio context alive in background
-    let keepaliveCtx = null, keepaliveOsc = null;
-    function startAudioKeepalive() {
-      if (keepaliveCtx) return;
-      try {
-        keepaliveCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 8000 });
-        keepaliveOsc = keepaliveCtx.createOscillator();
-        const gain = keepaliveCtx.createGain();
-        gain.gain.value = 0.001; // Inaudible
-        keepaliveOsc.connect(gain);
-        gain.connect(keepaliveCtx.destination);
-        keepaliveOsc.start();
-      } catch {}
-    }
+    // 3. Audio keepalive removed — oscillator was audible as a beep. NoSleep video handles it instead.
+    function startAudioKeepalive() {} // no-op, kept for call sites
 
     // 4. WebSocket ping keepalive — prevents idle timeout disconnects
     setInterval(() => {
