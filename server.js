@@ -725,6 +725,8 @@ wss.on('connection', (clientWs, req) => {
           // Stop article reading
           if (clientWs._articleChunks) { clientWs._articleChunks = null; console.log(`⏹️ [${clientId}] Article reading stopped`); }
         }
+      } else if (msg.type === 'ping') {
+        clientWs.send(JSON.stringify({ type: 'pong' }));
       } else if (msg.type === 'text_message') {
         (async () => {
           const text = msg.text || '';

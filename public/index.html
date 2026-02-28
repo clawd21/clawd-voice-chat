@@ -701,6 +701,65 @@
       document.querySelectorAll('[data-bot-avatar]').forEach(el => el.src = CFG.botAvatar);
       document.getElementById('hint').textContent = `Connecting to ${CFG.botName}...`;
     }).catch(() => {});
+    // ═══════════════════════════════════════════
+    // BACKGROUND KEEPALIVE — prevents browser from killing WebSocket/audio
+    // ═══════════════════════════════════════════
+
+    // 1. Wake Lock — prevents screen sleep (releases on background, re-acquires on foreground)
+    let wakeLock = null;
+    async function requestWakeLock() {
+      try {
+        if ('wakeLock' in navigator) {
+          wakeLock = await navigator.wakeLock.request('screen');
+          wakeLock.addEventListener('release', () => { wakeLock = null; });
+        }
+      } catch {}
+    }
+    requestWakeLock();
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') requestWakeLock();
+    });
+
+    // 2. Web Lock — tells the browser this tab is doing important work (reduces throttling)
+    if (navigator.locks) {
+      navigator.locks.request('voice-chat-active', { mode: 'exclusive' }, () => {
+        return new Promise(() => {}); // Never resolves — holds lock for tab lifetime
+      });
+    }
+
+    // 3. Silent audio keepalive — plays inaudible tone to keep audio context alive in background
+    let keepaliveCtx = null, keepaliveOsc = null;
+    function startAudioKeepalive() {
+      if (keepaliveCtx) return;
+      try {
+        keepaliveCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 8000 });
+        keepaliveOsc = keepaliveCtx.createOscillator();
+        const gain = keepaliveCtx.createGain();
+        gain.gain.value = 0.001; // Inaudible
+        keepaliveOsc.connect(gain);
+        gain.connect(keepaliveCtx.destination);
+        keepaliveOsc.start();
+      } catch {}
+    }
+
+    // 4. WebSocket ping keepalive — prevents idle timeout disconnects
+    setInterval(() => {
+      if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'ping' }));
+    }, 25000);
+
+    // 5. Reconnect on foreground — if we lost connection while backgrounded
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible' && ws?.readyState !== WebSocket.OPEN) {
+        console.log('🔄 Returning from background — reconnecting');
+        if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+        reconnectDelay = 1000;
+        connect();
+      }
+    });
+
+    // Start keepalive on first user interaction (audio context requires gesture)
+    document.addEventListener('pointerdown', () => startAudioKeepalive(), { once: true });
+
     let playbackQueue = [], isPlaying = false, nextPlaybackTime = 0, aiSpeaking = false, ignoreAudioUntil = 0;
     let currentAssistantMsg = null, hasMessages = false, totalCost = 0;
 
