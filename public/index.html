@@ -76,6 +76,72 @@
       --neon-pink: #FF00CC;
     }
 
+    [data-theme="purple"] {
+      --bg: #13091F;
+      --bg-gradient: linear-gradient(180deg, #13091F 0%, #1B0F30 50%, #110820 100%);
+      --surface: #1F1035;
+      --surface-hover: #2B1748;
+      --surface-border: rgba(168, 130, 255, 0.12);
+      --text: #EDE4FF;
+      --text-dim: #9B8ABF;
+      --accent: #A882FF;
+      --accent-soft: rgba(168, 130, 255, 0.15);
+      --accent-glow: rgba(168, 130, 255, 0.35);
+      --user-bubble: #241650;
+      --ai-bubble: #1A0E38;
+      --ai-bubble-border: rgba(168, 130, 255, 0.12);
+      --danger: #FF6B8A;
+      --success: #7CFFB2;
+      --warning: #FFD166;
+      --shadow: 0 2px 16px rgba(100, 50, 200, 0.2);
+    }
+
+    [data-theme="purple"] body {
+      background: var(--bg-gradient);
+    }
+
+    [data-theme="purple"] .mic-btn {
+      border-color: #A882FF;
+    }
+
+    [data-theme="purple"] .mic-btn:hover {
+      background: rgba(168, 130, 255, 0.12);
+      box-shadow: 0 0 20px rgba(168, 130, 255, 0.2);
+    }
+
+    [data-theme="purple"] .mic-btn.active {
+      background: #A882FF !important;
+      border-color: #A882FF !important;
+      box-shadow: 0 0 0 6px rgba(168, 130, 255, 0.25), 0 0 40px rgba(168, 130, 255, 0.3) !important;
+    }
+
+    [data-theme="purple"] .header {
+      background: rgba(31, 16, 53, 0.92) !important;
+      border-bottom-color: rgba(168, 130, 255, 0.1) !important;
+    }
+
+    [data-theme="purple"] .footer {
+      background: rgba(31, 16, 53, 0.95) !important;
+      border-top-color: rgba(168, 130, 255, 0.1) !important;
+    }
+
+    [data-theme="purple"] .msg.assistant .msg-label {
+      color: #A882FF !important;
+    }
+
+    [data-theme="purple"] .header-pill {
+      border-color: rgba(168, 130, 255, 0.2);
+    }
+
+    [data-theme="purple"] .text-input-row input {
+      border-color: rgba(168, 130, 255, 0.15);
+    }
+
+    [data-theme="purple"] .text-input-row input:focus {
+      border-color: #A882FF;
+      box-shadow: 0 0 12px rgba(168, 130, 255, 0.15);
+    }
+
     [data-theme="neon"] body {
       background: var(--bg-gradient);
     }
@@ -1258,7 +1324,7 @@
 
     // Theme (synced via server)
     const themeToggle = document.getElementById('themeToggle');
-    const themeOrder = ['dark', 'light', 'neon'];
+    const themeOrder = ['dark', 'light', 'purple', 'neon'];
     const themeIcons = { dark: '🌙', light: '☀️', neon: '⚡' };
     function applyTheme(t) {
       if (!themeOrder.includes(t)) t = 'dark';
