@@ -705,20 +705,45 @@
     // BACKGROUND KEEPALIVE — prevents browser from killing WebSocket/audio
     // ═══════════════════════════════════════════
 
-    // 1. Wake Lock — prevents screen sleep (releases on background, re-acquires on foreground)
+    // 1. Wake Lock — prevents screen sleep
     let wakeLock = null;
     async function requestWakeLock() {
       try {
         if ('wakeLock' in navigator) {
           wakeLock = await navigator.wakeLock.request('screen');
-          wakeLock.addEventListener('release', () => { wakeLock = null; });
+          console.log('🔒 Wake Lock acquired');
+          wakeLock.addEventListener('release', () => { wakeLock = null; console.log('🔓 Wake Lock released'); });
         }
-      } catch {}
+      } catch (e) { console.log('Wake Lock failed:', e.message); }
     }
-    requestWakeLock();
+    // Re-acquire on visibility change AND on any user interaction
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'visible') requestWakeLock();
     });
+
+    // 1b. NoSleep fallback — plays a tiny silent video to prevent screen lock (works on iOS/Android when Wake Lock doesn't)
+    let noSleepVideo = null;
+    function startNoSleep() {
+      if (noSleepVideo) return;
+      noSleepVideo = document.createElement('video');
+      noSleepVideo.setAttribute('playsinline', '');
+      noSleepVideo.setAttribute('muted', '');
+      noSleepVideo.muted = true;
+      noSleepVideo.loop = true;
+      noSleepVideo.style.position = 'fixed';
+      noSleepVideo.style.opacity = '0';
+      noSleepVideo.style.width = '1px';
+      noSleepVideo.style.height = '1px';
+      noSleepVideo.style.pointerEvents = 'none';
+      // Tiny silent webm (base64) — just enough to keep the screen on
+      noSleepVideo.src = 'data:video/webm;base64,GkXfo0AgQoaBAUL3gQFC8oEEQvOBCEKCQAR3ZWJtQoeBAkKFgQIYU4BnQI0VSalmQCgq17FAAw9CQE2AQAZ3aGFtbXlXQUAGd2hhbW15RIlACECPQAAAAAAAFlSua0AxrkAu14EBY8WBAZyBACK1nEADdW5NMYcgQxjUWpZOkMX9cRL/AAAAAABEjq5PAAAAAAAAAABhAAaFDAU=';
+      document.body.appendChild(noSleepVideo);
+      noSleepVideo.play().catch(() => {});
+      console.log('📱 NoSleep video started');
+    }
+    function stopNoSleep() {
+      if (noSleepVideo) { noSleepVideo.pause(); noSleepVideo.remove(); noSleepVideo = null; }
+    }
 
     // 2. Web Lock — tells the browser this tab is doing important work (reduces throttling)
     if (navigator.locks) {
@@ -757,8 +782,8 @@
       }
     });
 
-    // Start keepalive on first user interaction (audio context requires gesture)
-    document.addEventListener('pointerdown', () => startAudioKeepalive(), { once: true });
+    // Also start keepalive on first user interaction as fallback
+    document.addEventListener('pointerdown', () => { startAudioKeepalive(); requestWakeLock(); startNoSleep(); }, { once: true });
 
     let playbackQueue = [], isPlaying = false, nextPlaybackTime = 0, aiSpeaking = false, ignoreAudioUntil = 0;
     let currentAssistantMsg = null, hasMessages = false, totalCost = 0;
@@ -863,6 +888,10 @@
 
     async function startRecording() {
       try {
+        // Acquire screen wake lock + start NoSleep video on mic activation
+        requestWakeLock();
+        startNoSleep();
+        startAudioKeepalive();
         if (!audioContext) audioContext = new AudioContext({ sampleRate: 24000 });
         if (audioContext.state === 'suspended') await audioContext.resume();
         mediaStream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, sampleRate: 24000, echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
