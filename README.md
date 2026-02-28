@@ -272,6 +272,17 @@ clawd-voice-chat/
 }
 ```
 
+## Screen Recording (Video Bug Reports)
+
+Record your screen and narrate bugs or feature requests — the AI analyzes the video and suggests fixes.
+
+1. **Tap 🔴** next to the 📎 button
+2. **Share your screen** and talk through the issue
+3. **Tap ⏹️** to stop — auto-uploads and analyzes
+4. **GPT-4o Vision** extracts frames + transcribes audio → identifies the bug → speaks the analysis back
+
+Works on desktop Chrome. On mobile, falls back to video file upload (Android PWA doesn't support screen capture). Requires `ffmpeg` on the server.
+
 ## Cost
 
 Using `gpt-4o-mini-realtime-preview`:

@@ -4,7 +4,8 @@ import { createServer } from 'http';
 import { WebSocketServer, WebSocket } from 'ws';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
-import { readFileSync, writeFileSync, existsSync } from 'fs';
+import { readFileSync, writeFileSync, existsSync, promises as fsp } from 'fs';
+import { execSync } from 'child_process';
 import { Readability } from '@mozilla/readability';
 import { parseHTML } from 'linkedom';
 import { addUsage, getTodayCost, startSession, endSession, addMessage, getHistory, clearHistory as dbClearHistory, getPreference, setPreference } from './db.js';
@@ -210,6 +211,169 @@ app.post('/api/upload-image', upload.single('image'), async (req, res) => {
     }
   } catch (e) {
     console.error('📎 Upload error:', e);
+    res.json({ ok: false, error: e.message });
+  }
+});
+
+// Video upload for screen recording bug reports
+const videoUpload = multer({ dest: '/tmp/voice-uploads/', limits: { fileSize: 50 * 1024 * 1024 } });
+app.post('/api/upload-video', videoUpload.single('video'), async (req, res) => {
+  console.log('🎬 Video upload request received', req.file?.originalname, req.file?.size);
+  try {
+    const file = req.file;
+    if (!file) return res.json({ ok: false, error: 'No video file received' });
+
+    const projectId = req.body.project || 'do';
+    const project = PROJECT_CONTEXTS[projectId] || PROJECT_CONTEXTS.do;
+    const comment = req.body.comment || '';
+    const videoPath = file.path;
+    const framesDir = `${videoPath}_frames`;
+
+    await fsp.mkdir(framesDir, { recursive: true });
+
+    // Get video duration
+    let duration = 60;
+    try {
+      const durationOut = execSync(`ffprobe -v quiet -show_entries format=duration -of csv=p=0 "${videoPath}"`, { timeout: 10000 }).toString().trim();
+      duration = Math.min(parseFloat(durationOut) || 60, 60);
+    } catch (e) {
+      console.log('⚠️ Could not get video duration:', e.message);
+    }
+
+    // Calculate fps for ~10 frames max (1 per 5 seconds, capped at 10)
+    const targetFrames = Math.min(Math.ceil(duration / 5), 10);
+    const fps = duration > 0 ? targetFrames / duration : 1;
+
+    // Extract key frames
+    console.log(`🎬 Extracting frames from ${duration.toFixed(1)}s video (target: ${targetFrames} frames)`);
+    try {
+      execSync(`ffmpeg -y -i "${videoPath}" -vf "fps=${fps},scale=640:-1" -q:v 5 "${framesDir}/frame_%03d.jpg"`, { timeout: 30000, stdio: 'pipe' });
+    } catch (e) {
+      console.log('⚠️ Frame extraction issue:', e.stderr?.toString().slice(-200) || e.message);
+    }
+
+    // Read extracted frames as base64
+    let frameFiles = [];
+    try { frameFiles = (await fsp.readdir(framesDir)).filter(f => f.endsWith('.jpg')).sort(); } catch {}
+    const frames = [];
+    for (const f of frameFiles.slice(0, 10)) {
+      const data = await fsp.readFile(`${framesDir}/${f}`);
+      frames.push(data.toString('base64'));
+    }
+    console.log(`🎬 Extracted ${frames.length} frames`);
+
+    // Extract audio for transcription
+    const audioPath = `${videoPath}_audio.mp3`;
+    let transcript = '';
+    try {
+      execSync(`ffmpeg -y -i "${videoPath}" -vn -acodec libmp3lame -q:a 4 "${audioPath}"`, { timeout: 15000, stdio: 'pipe' });
+
+      // Transcribe with Whisper
+      const audioBuffer = await fsp.readFile(audioPath);
+      const audioFile = new File([audioBuffer], 'audio.mp3', { type: 'audio/mpeg' });
+      const whisperForm = new FormData();
+      whisperForm.append('file', audioFile);
+      whisperForm.append('model', 'whisper-1');
+
+      const whisperRes = await fetch('https://api.openai.com/v1/audio/transcriptions', {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${OPENAI_API_KEY}` },
+        body: whisperForm,
+      });
+      const whisperData = await whisperRes.json();
+      transcript = whisperData.text || '';
+      console.log(`🎤 Transcription: "${transcript.slice(0, 100)}${transcript.length > 100 ? '...' : ''}"`);
+    } catch (e) {
+      console.log('⚠️ Audio extraction/transcription failed:', e.message);
+    }
+
+    // Send to GPT-4o vision for analysis
+    let analysis = '';
+    if (frames.length > 0) {
+      try {
+        const imageContent = frames.map(b64 => ({
+          type: 'image_url',
+          image_url: { url: `data:image/jpeg;base64,${b64}`, detail: 'low' }
+        }));
+
+        const gptRes = await fetch('https://api.openai.com/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${OPENAI_API_KEY}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            model: 'gpt-4o',
+            messages: [{
+              role: 'user',
+              content: [
+                {
+                  type: 'text',
+                  text: `The user recorded their screen to show a bug. Here are ${frames.length} key frames from the recording${transcript ? ` and what they said: "${transcript}"` : ' (no audio was captured)'}.\n\nDescribe what you see in the recording, identify the bug or issue, and suggest a fix. Be concise but thorough.${comment ? `\n\nUser's note: "${comment}"` : ''}`,
+                },
+                ...imageContent,
+              ],
+            }],
+            max_tokens: 1000,
+          }),
+        });
+        const gptData = await gptRes.json();
+        analysis = gptData.choices?.[0]?.message?.content || 'Analysis unavailable';
+        console.log(`🔍 Analysis: "${analysis.slice(0, 100)}..."`);
+      } catch (e) {
+        console.log('⚠️ GPT-4o analysis failed:', e.message);
+        analysis = 'Analysis failed: ' + e.message;
+      }
+    } else {
+      analysis = 'No frames could be extracted from the video.';
+    }
+
+    // Post to Slack
+    if (project?.slackChannel) {
+      try {
+        const channelId = await resolveSlackChannel(project.slackChannel);
+        if (channelId) {
+          const token = SLACK_USER_TOKEN || SLACK_BOT_TOKEN;
+          const videoData = readFileSync(file.path);
+
+          // Upload video to Slack
+          const getUrlRes = await fetch(`https://slack.com/api/files.getUploadURLExternal?filename=${encodeURIComponent(file.originalname || 'screen-recording.webm')}&length=${videoData.length}`, {
+            headers: { 'Authorization': `Bearer ${token}` },
+          });
+          const urlData = await getUrlRes.json();
+          if (urlData.ok) {
+            await fetch(urlData.upload_url, {
+              method: 'POST',
+              headers: { 'Content-Type': file.mimetype || 'video/webm' },
+              body: videoData,
+            });
+            await fetch('https://slack.com/api/files.completeUploadExternal', {
+              method: 'POST',
+              headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                files: [{ id: urlData.file_id, title: file.originalname || 'screen-recording.webm' }],
+                channel_id: channelId,
+                initial_comment: `🎬 Screen Recording Bug Report\n${comment ? `📝 ${comment}\n` : ''}${transcript ? `🎤 "${transcript}"\n` : ''}\n🔍 *Analysis:*\n${analysis}`,
+              }),
+            });
+            console.log(`📤 Video + analysis posted to ${project.slackChannel}`);
+          }
+        }
+      } catch (e) {
+        console.error('⚠️ Slack video upload failed:', e.message);
+      }
+    }
+
+    // Clean up temp files
+    try {
+      await fsp.rm(framesDir, { recursive: true, force: true });
+      await fsp.unlink(videoPath).catch(() => {});
+      await fsp.unlink(audioPath).catch(() => {});
+    } catch {}
+
+    res.json({ ok: true, transcript, analysis, frameCount: frames.length });
+  } catch (e) {
+    console.error('🎬 Video upload error:', e);
     res.json({ ok: false, error: e.message });
   }
 });

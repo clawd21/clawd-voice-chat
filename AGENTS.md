@@ -327,6 +327,50 @@ Key details:
 
 The service worker uses network-first strategy — always fetches fresh code, falls back to cache if offline. It auto-checks for updates every 60 seconds. Auth bypass is configured for `/manifest.json`, `/sw.js`, and icon files so the PWA can install without credentials.
 
+## Screen Recording / Video Bug Reports
+
+The app includes a built-in screen recording feature for visual bug reports and feature requests.
+
+### How It Works
+
+1. User taps 🔴 record button (next to 📎 in the text input row)
+2. Browser prompts for screen share permission (`getDisplayMedia`)
+3. Screen + mic audio are recorded simultaneously via `MediaRecorder` (webm format)
+4. Recording indicator (red dot + timer) appears in the header
+5. User taps ⏹️ to stop — video **auto-uploads immediately** (no staging step)
+6. Server processes the video:
+   - **ffprobe** detects duration → calculates optimal fps for ~10 key frames
+   - **ffmpeg** extracts key frames at 640px width
+   - **ffmpeg** extracts audio track
+   - **OpenAI Whisper** transcribes the user's narration
+   - **GPT-4o Vision** analyzes frames + transcript → identifies bugs/feature requests
+   - Video + analysis posted to **Slack** via the configured channel
+   - Analysis sent to **voice AI** so it speaks the summary back
+7. Temp files (video, audio, frames) are cleaned up after processing
+
+### Limitations
+
+- **Android PWA (standalone mode)**: `getDisplayMedia` is not supported — falls back to file picker automatically
+- **iOS Safari**: No `getDisplayMedia` support at all — always uses file picker fallback
+- **Desktop Chrome**: Full screen recording works
+- **Max duration**: 60 seconds (auto-stops with notification)
+- **Max file size**: 50MB
+- **ffmpeg** must be installed on the server
+
+### Server Endpoint
+
+`POST /api/upload-video` — multipart form with fields:
+- `video` — the video file (webm/mp4/mov)
+- `project` — project/channel ID for Slack routing
+- `comment` — optional text comment from the user
+
+Returns: `{ ok, transcript, analysis, frameCount }`
+
+### Key Code Locations
+
+- **Client**: Screen recording UI and MediaRecorder logic in `public/index.html` (search for `screenRecBtn`, `screenRecorder`, `getDisplayMedia`)
+- **Server**: `/api/upload-video` endpoint in `server.js` (search for `upload-video`, `ffmpeg`, `whisper`)
+
 ## Troubleshooting
 
 | Problem | Fix |

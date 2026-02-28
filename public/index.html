@@ -116,8 +116,8 @@
     }
 
     [data-theme="purple"] .header {
-      background: rgba(31, 16, 53, 0.92) !important;
-      border-bottom-color: rgba(168, 130, 255, 0.1) !important;
+      background: linear-gradient(135deg, #E65100, #FF8F00) !important;
+      border-bottom-color: rgba(255, 160, 0, 0.3) !important;
     }
 
     [data-theme="purple"] .footer {
@@ -681,6 +681,99 @@
       border-radius: 12px;
       box-shadow: 0 4px 40px rgba(0,0,0,0.5);
     }
+
+    /* ─── Screen Recording ─── */
+    .recording-indicator {
+      display: none;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--danger);
+      padding: 4px 10px;
+      background: rgba(255, 107, 107, 0.15);
+      border-radius: 16px;
+    }
+    .recording-indicator.visible { display: flex; }
+    .recording-indicator .rec-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--danger);
+      animation: recPulse 1s ease-in-out infinite;
+    }
+    @keyframes recPulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.3; }
+    }
+    .video-stage {
+      display: none;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 12px;
+      background: var(--surface-hover);
+      border-radius: 12px;
+      border: 1px solid var(--surface-border);
+      width: 100%;
+      max-width: 500px;
+    }
+    .video-stage.visible { display: flex; }
+    .video-stage video {
+      width: 100px;
+      height: 64px;
+      object-fit: cover;
+      border-radius: 8px;
+      background: #000;
+    }
+    .video-stage .video-info {
+      flex: 1;
+      font-size: 12px;
+      color: var(--text-dim);
+      overflow: hidden;
+    }
+    .video-stage .video-info div {
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .video-stage .video-remove {
+      cursor: pointer;
+      padding: 4px 8px;
+      color: var(--danger);
+      font-size: 16px;
+      border: none;
+      background: none;
+      border-radius: 8px;
+      transition: background 0.2s;
+    }
+    .video-stage .video-remove:hover { background: rgba(255,107,107,0.15); }
+    .video-thumb-wrap {
+      position: relative;
+      display: inline-block;
+      cursor: pointer;
+      margin-top: 8px;
+    }
+    .video-thumb-wrap video {
+      max-width: 250px;
+      max-height: 200px;
+      border-radius: 12px;
+      border: 1px solid var(--surface-border);
+      display: block;
+    }
+    .video-play-overlay {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: rgba(0,0,0,0.35);
+      border-radius: 12px;
+      font-size: 36px;
+      color: white;
+      pointer-events: none;
+      transition: opacity 0.2s;
+    }
+    .video-thumb-wrap:hover .video-play-overlay { background: rgba(0,0,0,0.5); }
   </style>
 </head>
 <body>
@@ -694,6 +787,10 @@
       </div>
     </div>
     <div class="header-right">
+      <div class="recording-indicator" id="recIndicator">
+        <span class="rec-dot"></span>
+        <span id="recTimer">0:00</span>
+      </div>
       <a class="header-pill" id="costTracker" href="https://platform.openai.com/usage" target="_blank" title="View OpenAI usage">
         💰 <span class="cost-value" id="costAmount">$0.000</span>
       </a>
@@ -731,8 +828,18 @@
       </div>
       <span id="speakingLabel">Speaking...</span>
     </div>
+    <div class="video-stage" id="videoStage">
+      <video id="videoPreview" muted playsinline></video>
+      <div class="video-info">
+        <div id="videoFileName">video.webm</div>
+        <div id="videoFileSize">0 MB</div>
+      </div>
+      <button class="video-remove" id="videoRemove" title="Remove video">✕</button>
+    </div>
     <div class="text-input-row">
       <input type="file" id="imageInput" accept="image/*" style="display:none;">
+      <input type="file" id="videoInput" accept="video/*" style="display:none;">
+      <button class="icon-btn" id="screenRecBtn" title="Record screen" style="font-size:18px;">🔴</button>
       <button class="icon-btn" id="imageBtn" title="Upload image to Slack" style="font-size:18px;">📎</button>
       <input type="text" id="textInput" placeholder="Paste a link or type a message..." autocomplete="off" style="flex:1;">
       <button class="icon-btn" id="sendTextBtn" title="Send" style="font-size:18px;">📨</button>
@@ -754,6 +861,19 @@
       const modal = document.getElementById('imgModal');
       document.getElementById('imgModalImg').src = url;
       modal.classList.add('visible');
+    }
+    function toggleVideoPlay(videoId) {
+      const vid = document.getElementById(videoId);
+      const overlay = document.getElementById(videoId + '_overlay');
+      if (!vid) return;
+      if (vid.paused) {
+        vid.play();
+        if (overlay) overlay.style.display = 'none';
+      } else {
+        vid.pause();
+        if (overlay) overlay.style.display = 'flex';
+      }
+      vid.onended = () => { if (overlay) overlay.style.display = 'flex'; };
     }
     let ws = null, audioContext = null, mediaStream = null, audioWorkletNode = null;
     let isRecording = false, isConnected = false, reconnectTimer = null, reconnectDelay = 1000;
@@ -1186,6 +1306,11 @@
     const sendTextBtn = document.getElementById('sendTextBtn');
     function sendText() {
       const text = textInput.value.trim();
+      // If there's a staged video, upload it
+      if (pendingVideo) {
+        uploadVideo(pendingVideo);
+        return;
+      }
       // If there's a staged image, upload it (with optional text)
       if (pendingImage) {
         uploadImage(pendingImage);
@@ -1236,6 +1361,7 @@
     }
 
     let pendingImage = null;
+    let pendingVideo = null;
 
     function stageImage(file) {
       pendingImage = file;
@@ -1258,7 +1384,260 @@
       document.body.style.outline = '';
       const file = e.dataTransfer.files[0];
       if (file && file.type.startsWith('image/')) stageImage(file);
+      else if (file && file.type.startsWith('video/')) {
+        if (file.size > 50 * 1024 * 1024) { addSystemMessage('⚠️ Video too large. Max 50MB.'); return; }
+        stageVideo(file);
+      }
     });
+
+    // ─── Screen Recording ───
+    let screenRecorder = null, screenChunks = [], screenStream = null, micStreamForScreen = null;
+    let recStartTime = 0, recTimerInterval = null, recAudioCtx = null;
+    const MAX_REC_SECONDS = 60;
+    const MAX_VIDEO_SIZE = 50 * 1024 * 1024;
+    const screenRecBtn = document.getElementById('screenRecBtn');
+    const videoInput = document.getElementById('videoInput');
+    const recIndicator = document.getElementById('recIndicator');
+    const recTimer = document.getElementById('recTimer');
+    const videoStage = document.getElementById('videoStage');
+    const videoPreview = document.getElementById('videoPreview');
+    const videoRemove = document.getElementById('videoRemove');
+
+    const canScreenRecord = !!(navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia);
+
+    function getRecorderMimeType() {
+      const types = ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm', 'video/mp4'];
+      for (const t of types) { if (typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported(t)) return t; }
+      return '';
+    }
+
+    screenRecBtn.addEventListener('click', async () => {
+      // If recording, stop
+      if (screenRecorder && screenRecorder.state === 'recording') {
+        stopScreenRecording();
+        return;
+      }
+      // Try screen capture first, fall back to file picker
+      if (!canScreenRecord) {
+        videoInput.click();
+        return;
+      }
+      try {
+        screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+        // Try to get mic audio too
+        try { micStreamForScreen = await navigator.mediaDevices.getUserMedia({ audio: true }); } catch (e) { console.log('Mic unavailable for screen rec:', e.message); }
+
+        // Combine video + mixed audio
+        const tracks = [...screenStream.getVideoTracks()];
+        recAudioCtx = new AudioContext();
+        const dest = recAudioCtx.createMediaStreamDestination();
+        let hasAudio = false;
+
+        if (screenStream.getAudioTracks().length > 0) {
+          const screenAudio = recAudioCtx.createMediaStreamSource(new MediaStream(screenStream.getAudioTracks()));
+          screenAudio.connect(dest);
+          hasAudio = true;
+        }
+        if (micStreamForScreen) {
+          const micAudio = recAudioCtx.createMediaStreamSource(micStreamForScreen);
+          micAudio.connect(dest);
+          hasAudio = true;
+        }
+        if (hasAudio) tracks.push(...dest.stream.getAudioTracks());
+
+        const combinedStream = new MediaStream(tracks);
+        const mimeType = getRecorderMimeType();
+        screenRecorder = mimeType
+          ? new MediaRecorder(combinedStream, { mimeType })
+          : new MediaRecorder(combinedStream);
+
+        screenChunks = [];
+        screenRecorder.ondataavailable = (e) => { if (e.data.size > 0) screenChunks.push(e.data); };
+        screenRecorder.onstop = () => {
+          const blob = new Blob(screenChunks, { type: screenRecorder.mimeType || 'video/webm' });
+          if (blob.size > MAX_VIDEO_SIZE) {
+            addSystemMessage(`⚠️ Recording too large (${(blob.size / 1024 / 1024).toFixed(1)}MB). Max is 50MB.`);
+            return;
+          }
+          if (blob.size > 0) {
+            // Auto-upload immediately — no staging step
+            const file = new File([blob], `screen-recording-${Date.now()}.webm`, { type: blob.type || 'video/webm' });
+            uploadVideo(file);
+          }
+        };
+
+        // Auto-stop when user ends screen share
+        screenStream.getVideoTracks()[0].onended = () => {
+          if (screenRecorder && screenRecorder.state === 'recording') stopScreenRecording();
+        };
+
+        screenRecorder.start(1000);
+        recStartTime = Date.now();
+        recIndicator.classList.add('visible');
+        screenRecBtn.textContent = '⏹️';
+        screenRecBtn.title = 'Stop recording';
+        document.title = '🔴 Recording... | Voice Chat';
+        updateRecTimer();
+        recTimerInterval = setInterval(updateRecTimer, 1000);
+
+        // Auto-stop at max duration
+        setTimeout(() => {
+          if (screenRecorder && screenRecorder.state === 'recording') {
+            addSystemMessage(`⏱️ Max recording time (${MAX_REC_SECONDS}s) reached.`);
+            stopScreenRecording();
+          }
+        }, MAX_REC_SECONDS * 1000);
+
+      } catch (e) {
+        cleanupScreenRecording();
+        if (e.name === 'NotAllowedError') {
+          // User cancelled — do nothing
+        } else {
+          // Screen capture not supported in this context (e.g. PWA standalone mode) — fall back to file picker
+          console.log('Screen capture failed, falling back to file picker:', e.message);
+          videoInput.click();
+        }
+      }
+    });
+
+    function updateRecTimer() {
+      const elapsed = Math.floor((Date.now() - recStartTime) / 1000);
+      const mins = Math.floor(elapsed / 60);
+      const secs = elapsed % 60;
+      recTimer.textContent = `${mins}:${secs.toString().padStart(2, '0')}`;
+    }
+
+    function stopScreenRecording() {
+      if (screenRecorder && screenRecorder.state === 'recording') screenRecorder.stop();
+      cleanupScreenRecording();
+    }
+
+    function cleanupScreenRecording() {
+      if (recTimerInterval) { clearInterval(recTimerInterval); recTimerInterval = null; }
+      recIndicator.classList.remove('visible');
+      screenRecBtn.textContent = '🔴';
+      screenRecBtn.title = 'Record screen';
+      document.title = `${CFG.botName} 🎙️ Voice Chat`;
+      if (screenStream) { screenStream.getTracks().forEach(t => t.stop()); screenStream = null; }
+      if (micStreamForScreen) { micStreamForScreen.getTracks().forEach(t => t.stop()); micStreamForScreen = null; }
+      if (recAudioCtx) { recAudioCtx.close().catch(() => {}); recAudioCtx = null; }
+    }
+
+    function stageVideo(blobOrFile) {
+      const file = (blobOrFile instanceof File && blobOrFile.name !== 'blob')
+        ? blobOrFile
+        : new File([blobOrFile], `screen-recording-${Date.now()}.webm`, { type: blobOrFile.type || 'video/webm' });
+      pendingVideo = file;
+      const url = URL.createObjectURL(blobOrFile);
+      videoPreview.src = url;
+      videoPreview.load();
+      document.getElementById('videoFileName').textContent = file.name;
+      document.getElementById('videoFileSize').textContent = `${(file.size / 1024 / 1024).toFixed(1)} MB`;
+      videoStage.classList.add('visible');
+      sendTextBtn.title = 'Send video + message';
+      textInput.placeholder = `Video ready — add a message or tap 📨 to send`;
+    }
+
+    videoRemove.addEventListener('click', () => {
+      pendingVideo = null;
+      videoStage.classList.remove('visible');
+      URL.revokeObjectURL(videoPreview.src);
+      videoPreview.src = '';
+      sendTextBtn.title = 'Send';
+      textInput.placeholder = 'Paste a link or type a message...';
+    });
+
+    // Video file input (iOS fallback)
+    videoInput.addEventListener('change', () => {
+      const file = videoInput.files[0];
+      if (file) {
+        if (file.size > MAX_VIDEO_SIZE) {
+          addSystemMessage(`⚠️ Video too large (${(file.size / 1024 / 1024).toFixed(1)}MB). Max is 50MB.`);
+          videoInput.value = '';
+          return;
+        }
+        stageVideo(file);
+      }
+      videoInput.value = '';
+    });
+
+    async function uploadVideo(file) {
+      const comment = textInput.value.trim();
+      screenRecBtn.textContent = '⏳';
+      screenRecBtn.disabled = true;
+      addSystemMessage('🎬 Uploading and analyzing screen recording... this may take a moment.');
+
+      const formData = new FormData();
+      formData.append('video', file, file.name);
+      formData.append('project', projectSelect.value);
+      formData.append('comment', comment);
+
+      try {
+        const res = await fetch('/api/upload-video', { method: 'POST', body: formData });
+        const data = await res.json();
+        if (data.ok) {
+          addVideoMessage(file, comment, data);
+          textInput.value = '';
+          screenRecBtn.textContent = '✅';
+
+          // Send analysis to voice AI so it can speak the response
+          if (ws?.readyState === WebSocket.OPEN && data.analysis) {
+            ws.send(JSON.stringify({
+              type: 'text_message',
+              text: `[Screen recording bug report analysis — summarize this for me briefly]: ${data.analysis.slice(0, 800)}`
+            }));
+          }
+        } else {
+          addSystemMessage(`❌ Video upload failed: ${data.error}`);
+          screenRecBtn.textContent = '❌';
+        }
+      } catch (e) {
+        addSystemMessage(`❌ Video upload error: ${e.message}`);
+        screenRecBtn.textContent = '❌';
+      }
+
+      // Clean up staging
+      pendingVideo = null;
+      videoStage.classList.remove('visible');
+      URL.revokeObjectURL(videoPreview.src);
+      videoPreview.src = '';
+      sendTextBtn.title = 'Send';
+      textInput.placeholder = 'Paste a link or type a message...';
+      screenRecBtn.disabled = false;
+      setTimeout(() => { screenRecBtn.textContent = '🔴'; screenRecBtn.title = 'Record screen'; }, 2500);
+    }
+
+    let videoMsgCounter = 0;
+    function addVideoMessage(file, comment, analysis) {
+      hideEmptyState();
+      const d = document.createElement('div');
+      d.className = 'msg user';
+      const url = URL.createObjectURL(file);
+      const videoId = 'vid_' + (++videoMsgCounter);
+      d.innerHTML = `
+        <div class="msg-label"><img class="msg-avatar" src="${CFG.userAvatar}">${esc(CFG.userName)}</div>
+        <div class="msg-text">🎬 Screen Recording${comment ? ': ' + esc(comment) : ''}</div>
+        <div class="video-thumb-wrap" onclick="toggleVideoPlay('${videoId}')">
+          <video id="${videoId}" src="${url}" style="max-width:250px;max-height:200px;border-radius:12px;border:1px solid var(--surface-border);" preload="metadata" playsinline></video>
+          <div class="video-play-overlay" id="${videoId}_overlay">▶️</div>
+        </div>
+        <div class="msg-time">${now()}</div>
+      `;
+      transcript.appendChild(d);
+
+      if (analysis?.analysis) {
+        const a = document.createElement('div');
+        a.className = 'msg assistant';
+        const analysisText = `🔍 Bug Report Analysis\n\n${analysis.analysis}${analysis.transcript ? '\n\n🎤 Transcript: "' + analysis.transcript + '"' : ''}\n\n📊 ${analysis.frameCount} frames analyzed`;
+        a.innerHTML = `
+          <div class="msg-label"><img class="msg-avatar" src="${CFG.botAvatar}">${esc(CFG.botName)}</div>
+          <div class="msg-text" style="white-space:pre-wrap;">${esc(analysisText)}</div>
+          <div class="msg-time">${now()}</div>
+        `;
+        transcript.appendChild(a);
+      }
+      scroll();
+    }
 
     muteBtn.addEventListener('click', () => {
       isMuted = !isMuted;
@@ -1337,6 +1716,14 @@
       applyTheme(p.theme); localStorage.setItem('voice-theme', p.theme);
       if (p.playbackSpeed) { document.getElementById('speedSelect').value = p.playbackSpeed; }
     }).catch(() => {});
+    // Random header color on click
+    document.querySelector('.header').addEventListener('click', (e) => {
+      // Don't trigger on button/select/pill clicks
+      if (e.target.closest('button, select, .header-pill, a, img')) return;
+      const hue = Math.floor(Math.random() * 360);
+      document.querySelector('.header').style.setProperty('background', `linear-gradient(135deg, hsl(${hue}, 80%, 35%), hsl(${(hue + 30) % 360}, 85%, 45%))`, 'important');
+    });
+
     themeToggle.addEventListener('click', () => {
       const cur = document.documentElement.getAttribute('data-theme') || 'dark';
       const next = themeOrder[(themeOrder.indexOf(cur) + 1) % themeOrder.length];
